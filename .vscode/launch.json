@@ -1,0 +1,28 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "lock_your_door",
+            "request": "launch",
+            "type": "dart",
+            "args": ["-d", "<Pixel_9_Pro>"]
+        },
+        {
+            "name": "lock_your_door (profile mode)",
+            "request": "launch",
+            "type": "dart",
+            "flutterMode": "profile",
+            "args": ["-d", "<Pixel_9_Pro>"]
+        },
+        {
+            "name": "lock_your_door (release mode)",
+            "request": "launch",
+            "type": "dart",
+            "flutterMode": "release",
+            "args": ["-d", "<Pixel_9_Pro>"]
+        }
+    ]
+}
