@@ -3,6 +3,7 @@ import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
+import 'logging_service.dart';
 
 class PhotoService {
   static final ImagePicker _picker = ImagePicker();
@@ -38,9 +39,10 @@ class PhotoService {
       final path = p.join(appDir.path, fileName);
 
       await File(path).writeAsBytes(img.encodeJpg(original, quality: 85));
+      LoggingService.info('Photo saved successfully at $path');
       return path;
-    } catch (e) {
-      print('Error taking photo: $e'); // Add error logging
+    } catch (e, s) {
+      LoggingService.error('Error taking photo', e, s);
       return null;
     }
   }

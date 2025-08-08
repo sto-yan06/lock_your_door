@@ -5,6 +5,8 @@ import '../services/photo_service.dart';
 import '../services/lock_status_service.dart';
 import '../models/lock_status.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:io';
+import '../services/door_detection_service.dart';
 
 class LockItem {
   final String id;
@@ -103,18 +105,30 @@ class LockSessionController extends ChangeNotifier {
 
   // Add a new lockable item (not persisted yet)
   void addItem(String name) {
-    final id = DateTime.now().millisecondsSinceEpoch.toString() +
-        '_' +
-        Random().nextInt(9999).toString();
+    final id = '${DateTime.now().millisecondsSinceEpoch}_${Random().nextInt(9999)}';
     items.add(LockItem(id: id, name: name));
     _saveExtraItems();               // <- persist
     notifyListeners();
   }
 
-  Future<void> lockItem(String id) async {
+  Future<String?> lockItem(String id) async {
     final item = items.firstWhere((e) => e.id == id);
     final photoPath = await PhotoService.takeAndSavePhotoWithTimestamp();
-    if (photoPath == null) return;
+    if (photoPath == null) return "Photo cancelled."; // User cancelled camera
+
+    // --- Door Detection Step ---
+    final isDoor = await DoorDetectionService.isDoor(photoPath);
+    if (!isDoor) {
+      // Clean up the invalid photo to save space
+      try {
+        await File(photoPath).delete();
+      } catch (_) {
+        // Ignore errors on cleanup
+      }
+      return "There is no door in the photo!"; // Return error message
+    }
+    // --- End of Detection ---
+
     item.isLocked = true;
     item.photoPath = photoPath;
     item.timestamp = DateTime.now();
@@ -127,6 +141,7 @@ class LockSessionController extends ChangeNotifier {
       await _saveExtraItems();
     }
     notifyListeners();
+    return null; // Return null on success
   }
 
   Future<void> unlockItem(String id) async {

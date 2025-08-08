@@ -121,7 +121,18 @@ class HomeView extends StatelessWidget {
                           await controller.unlockItem(item.id);
                         }
                       } else {
-                        await controller.lockItem(item.id);
+                        // Updated lock flow with error handling
+                        final error = await controller.lockItem(item.id);
+                        if (error != null &&
+                            error != "Photo cancelled." &&
+                            context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(error),
+                              backgroundColor: Colors.redAccent,
+                            ),
+                          );
+                        }
                       }
                     },
                   ),
@@ -160,8 +171,8 @@ class _DeviceCard extends StatelessWidget {
         border: Border.all(color: const Color(0xFF1E88FF), width: 2),
         gradient: LinearGradient(
           colors: [
-            Colors.white.withOpacity(0.08),
-            Colors.white.withOpacity(0.04),
+            Colors.white.withValues(alpha: .08),
+            Colors.white.withValues(alpha: .04),
           ],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
@@ -267,7 +278,7 @@ class _AddItemButton extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
         decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.10),
+          color: Colors.white.withValues(alpha: 0.10),
             borderRadius: BorderRadius.circular(14),
         ),
         child: Row(

@@ -17,7 +17,7 @@ class GlowingNavItem extends StatelessWidget {
     return InkResponse(
       onTap: onTap,
       radius: 40,
-      splashColor: const Color(0xFF1E88FF).withOpacity(.25),
+      splashColor: const Color(0xFF1E88FF).withValues(alpha: .25),
       highlightColor: Colors.transparent,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 180),
@@ -29,7 +29,7 @@ class GlowingNavItem extends StatelessWidget {
           boxShadow: isSelected
               ? [
                   BoxShadow(
-                    color: const Color(0xFF1E88FF).withOpacity(.55),
+                    color: const Color(0xFF1E88FF).withValues(alpha: .55),
                     blurRadius: 22,
                     spreadRadius: 2,
                   ),
@@ -44,7 +44,7 @@ class GlowingNavItem extends StatelessWidget {
           border: Border.all(
             color: isSelected
                 ? const Color(0xFF1E88FF)
-                : Colors.grey.withOpacity(.25),
+                : Colors.grey.withValues(alpha: .25),
             width: 1,
           ),
         ),

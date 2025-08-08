@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../controllers/lock_session_controller.dart';
+import '../services/logging_service.dart';
 
 class MenuView extends StatelessWidget {
   const MenuView({super.key});
@@ -256,6 +257,11 @@ class MenuView extends StatelessWidget {
               onPressed: () async {
                 final controller = Provider.of<LockSessionController>(context, listen: false);
                 await controller.clearAllData();
+                LoggingService.info('User cleared all app data.');
+
+                // Add this check to ensure the widget is still in the tree.
+                if (!context.mounted) return;
+
                 Navigator.of(context).pop();
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(content: Text('All data cleared successfully')),
