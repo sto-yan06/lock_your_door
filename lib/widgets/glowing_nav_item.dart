@@ -14,34 +14,45 @@ class GlowingNavItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
+    return InkResponse(
       onTap: onTap,
+      radius: 40,
+      splashColor: const Color(0xFF1E88FF).withOpacity(.25),
+      highlightColor: Colors.transparent,
       child: AnimatedContainer(
-        duration: const Duration(milliseconds: 150), // Faster animation
-        curve: Curves.easeOutCubic, // Snappier curve
-        padding: const EdgeInsets.all(12.0),
+        duration: const Duration(milliseconds: 180),
+        width: 60,
+        height: 60,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
-          color: isSelected ? Colors.blue : Colors.transparent,
+          color: isSelected ? const Color(0xFF1E88FF) : Colors.white,
           boxShadow: isSelected
               ? [
                   BoxShadow(
-                    color: Colors.blue.withValues(alpha: 0.4), // More visible glow
-                    blurRadius: 12,
+                    color: const Color(0xFF1E88FF).withOpacity(.55),
+                    blurRadius: 22,
                     spreadRadius: 2,
                   ),
-                  BoxShadow(
-                    color: Colors.blue.withValues(alpha: 0.2),
-                    blurRadius: 20,
-                    spreadRadius: 4,
-                  ),
                 ]
-              : [],
+              : [
+                  BoxShadow(
+                    color: Colors.black12,
+                    blurRadius: 6,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+          border: Border.all(
+            color: isSelected
+                ? const Color(0xFF1E88FF)
+                : Colors.grey.withOpacity(.25),
+            width: 1,
+          ),
         ),
+        alignment: Alignment.center,
         child: Icon(
           icon,
-          color: isSelected ? Colors.white : Colors.grey,
-          size: 28,
+          size: 26,
+          color: isSelected ? Colors.white : Colors.grey[700],
         ),
       ),
     );
