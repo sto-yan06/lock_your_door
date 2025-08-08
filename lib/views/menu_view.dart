@@ -111,7 +111,7 @@ class MenuView extends StatelessWidget {
         borderRadius: BorderRadius.circular(15),
         boxShadow: [
           BoxShadow(
-            color: Colors.grey.withOpacity(0.1),
+            color: Colors.grey.withValues(alpha: 0.1),
             spreadRadius: 1,
             blurRadius: 5,
             offset: const Offset(0, 2),
@@ -132,8 +132,8 @@ class MenuView extends StatelessWidget {
                   height: 50,
                   decoration: BoxDecoration(
                     color: isDestructive 
-                        ? Colors.red.withOpacity(0.1)
-                        : const Color(0xFF663399).withOpacity(0.1),
+                        ? Colors.red.withValues(alpha: 0.1)
+                        : const Color(0xFF663399).withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Icon(
@@ -169,7 +169,7 @@ class MenuView extends StatelessWidget {
                 Icon(
                   Icons.arrow_forward_ios,
                   size: 16,
-                  color: Colors.grey.withOpacity(0.5),
+                  color: Colors.grey.withValues(alpha: 0.5),
                 ),
               ],
             ),

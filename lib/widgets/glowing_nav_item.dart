@@ -26,12 +26,12 @@ class GlowingNavItem extends StatelessWidget {
           boxShadow: isSelected
               ? [
                   BoxShadow(
-                    color: Colors.blue.withOpacity(0.4), // More visible glow
+                    color: Colors.blue.withValues(alpha: 0.4), // More visible glow
                     blurRadius: 12,
                     spreadRadius: 2,
                   ),
                   BoxShadow(
-                    color: Colors.blue.withOpacity(0.2),
+                    color: Colors.blue.withValues(alpha: 0.2),
                     blurRadius: 20,
                     spreadRadius: 4,
                   ),
