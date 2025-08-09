@@ -1,91 +1,143 @@
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
+import 'package:cryptography/cryptography.dart';
+
+import 'crypto_key_service.dart';
 import 'logging_service.dart';
+import 'door_detection_service.dart';
 
-/// A top-level function required for running in an isolate via compute().
-/// This function handles all heavy image processing and file I/O.
-Future<bool> _processAndSaveImage(Map<String, dynamic> params) async {
+class PhotoCapture {
+  final String tempPath;      // image_picker temp file path
+  final Uint8List bytes;      // raw capture bytes
+  PhotoCapture(this.tempPath, this.bytes);
+}
+
+/// compute() worker: encode JPEG, encrypt AES-GCM(256) and write file
+Future<bool> _processEncryptAndSaveImage(Map<String, dynamic> raw) async {
   try {
-    final Uint8List imageBytes = params['bytes'];
-    final String text = params['text'];
-    final String path = params['path'];
+    final Uint8List inputBytes = raw['inputBytes'];
+    final String overlayText = raw['overlayText'];
+    final String outPath = raw['outPath'];
+    final Uint8List keyBytes = raw['keyBytes'];
 
-    // 1. Decode the image (CPU intensive)
-    final img.Image? original = img.decodeImage(imageBytes);
+    final original = img.decodeImage(inputBytes);
     if (original == null) return false;
 
-    // 2. Draw the timestamp onto the image (CPU intensive)
     img.drawString(
       original,
-      text,
-      font: img.arial48,
-      x: 10,
-      y: original.height - 50,
-      color: img.ColorRgba8(255, 255, 255, 250),
+      overlayText,
+      font: img.arial24,
+      x: 12,
+      y: original.height - 40,
+      color: img.ColorRgba8(255, 255, 255, 240),
     );
 
-    // 3. Re-encode the image to JPG format (CPU intensive)
-    final processedBytes = img.encodeJpg(original, quality: 85);
+    final jpegBytes = Uint8List.fromList(img.encodeJpg(original, quality: 85));
 
-    // 4. Write the file to disk (I/O operation)
-    await File(path).writeAsBytes(processedBytes);
+    final algorithm = AesGcm.with256bits();
+    final nonce = algorithm.newNonce(); // 12 bytes
+    final box = await algorithm.encrypt(
+      jpegBytes,
+      secretKey: SecretKey(keyBytes),
+      nonce: nonce,
+    );
+
+    final out = BytesBuilder()
+      ..add(nonce)
+      ..add(box.cipherText)
+      ..add(box.mac.bytes);
+
+    await File(outPath).writeAsBytes(out.takeBytes(), flush: true);
     return true;
-  } catch (e) {
-    // Cannot use LoggingService here as it's not safe across isolates.
-    // Return false and let the main thread handle logging.
+  } catch (_) {
     return false;
   }
+}
+
+/// compute() worker: run door detection by path (kept simple)
+Future<bool> _isDoorInIsolate(String path) async {
+  return DoorDetectionService.isDoor(path);
 }
 
 class PhotoService {
   static final ImagePicker _picker = ImagePicker();
 
-  // Încarcă poză + adaugă timestamp
-  static Future<String?> takeAndSavePhotoWithTimestamp() async {
+  // 1) Capture a photo to a temp file but DO NOT persist it.
+  static Future<PhotoCapture?> capturePhoto() async {
+    final XFile? photo = await _picker.pickImage(
+      source: ImageSource.camera,
+      imageQuality: 85,
+    );
+    if (photo == null) return null;
+    final bytes = await photo.readAsBytes();
+    return PhotoCapture(photo.path, bytes);
+  }
+
+  // 2) Validate the temp capture is a door (off the UI thread).
+  static Future<bool> isValidDoor(String tempPath) {
+    return compute(_isDoorInIsolate, tempPath);
+  }
+
+  // 3) If valid, process + encrypt + save to app docs. Returns final path.
+  static Future<String?> processEncryptAndSave(Uint8List inputBytes) async {
     try {
-      // 1. Pick image (this is a UI operation, must be on the main thread)
-      final XFile? photo = await _picker.pickImage(
-        source: ImageSource.camera,
-        imageQuality: 85,
-      );
-      if (photo == null) return null;
-
-      // 2. Prepare all necessary data on the main thread
-      final bytes = await photo.readAsBytes();
+      final keyBytes = await CryptoKeyService.getOrCreatePhotoKey();
       final now = DateTime.now();
-      final text = "${_formatNumber(now.day)}.${_formatNumber(now.month)}.${now.year} "
-                   "${_formatNumber(now.hour)}:${_formatNumber(now.minute)}";
-      
+      final overlay =
+          '${_two(now.day)}.${_two(now.month)}.${now.year} ${_two(now.hour)}:${_two(now.minute)}';
+
       final appDir = await getApplicationDocumentsDirectory();
-      final fileName = 'lock_${now.millisecondsSinceEpoch}.jpg';
-      final path = p.join(appDir.path, fileName);
+      final outPath = p.join(appDir.path, 'lock_${now.millisecondsSinceEpoch}.jpg.enc');
 
-      final params = {
-        'bytes': bytes,
-        'text': text,
-        'path': path,
-      };
+      final ok = await compute(_processEncryptAndSaveImage, {
+        'inputBytes': inputBytes,
+        'overlayText': overlay,
+        'outPath': outPath,
+        'keyBytes': keyBytes,
+      });
 
-      // 3. Offload all heavy work to the background isolate
-      final success = await compute(_processAndSaveImage, params);
-
-      if (success) {
-        LoggingService.info('Photo saved successfully at $path');
-        return path;
-      } else {
-        LoggingService.error('Failed to process and save photo in isolate.');
-        return null;
-      }
+      if (!ok) return null;
+      LoggingService.info('Encrypted photo saved at $outPath');
+      return outPath;
     } catch (e, s) {
-      LoggingService.error('Error taking photo', e, s);
+      LoggingService.error('processEncryptAndSave failed', e, s);
       return null;
     }
   }
 
-  // Renamed for clarity
-  static String _formatNumber(int n) => n.toString().padLeft(2, '0');
+  // 4) Decrypt for display
+  static Future<Uint8List?> loadDecryptedImageBytes(String path) async {
+    try {
+      final data = await File(path).readAsBytes();
+      if (data.length < 12 + 16) return null;
+
+      final nonce = data.sublist(0, 12);
+      final macBytes = data.sublist(data.length - 16);
+      final cipherText = data.sublist(12, data.length - 16);
+
+      final clear = await AesGcm.with256bits().decrypt(
+        SecretBox(cipherText, nonce: nonce, mac: Mac(macBytes)),
+        secretKey: SecretKey(await CryptoKeyService.getOrCreatePhotoKey()),
+      );
+      return Uint8List.fromList(clear);
+    } catch (e) {
+      LoggingService.warning('Failed to decrypt $path: $e');
+      return null;
+    }
+  }
+
+  // 5) Best-effort temp cleanup
+  static Future<void> deleteIfExists(String path) async {
+    try {
+      final f = File(path);
+      if (await f.exists()) await f.delete();
+    } catch (_) {}
+  }
+
+  static String _two(int n) => n.toString().padLeft(2, '0');
 }

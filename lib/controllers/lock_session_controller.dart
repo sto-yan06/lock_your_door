@@ -7,7 +7,6 @@ import '../services/door_detection_service.dart';
 import '../services/photo_service.dart';
 import '../services/logging_service.dart';
 
-// --- ADD THIS FUNCTION HERE ---
 // This helper function is ready to be run in an isolate.
 Future<bool> _isDoorInIsolate(String path) {
   return DoorDetectionService.isDoor(path);
@@ -32,8 +31,6 @@ class LockSessionController extends ChangeNotifier {
 
   /// Reports the last photo path of the primary door.
   String? get lastPhotoPath => _primaryItem?.photoPath;
-  
-  // --- End of new getters ---
 
   LockSessionController() {
     _itemsBox = Hive.box<LockItem>('lock_items');
@@ -69,21 +66,30 @@ class LockSessionController extends ChangeNotifier {
   }
 
   Future<String?> lockItem(String id) async {
-    final photoPath = await PhotoService.takeAndSavePhotoWithTimestamp();
-    if (photoPath == null) return "Photo cancelled.";
+    // Capture to temp, do not save yet
+    final capture = await PhotoService.capturePhoto();
+    if (capture == null) return "Photo cancelled.";
 
-    final isDoor = await compute(_isDoorInIsolate, photoPath);
+    // Validate in background isolate
+    final isDoor = await PhotoService.isValidDoor(capture.tempPath);
     if (!isDoor) {
-      try {
-        await File(photoPath).delete();
-      } catch (_) {}
-      return "There is no door in the photo!";
+      await PhotoService.deleteIfExists(capture.tempPath);
+      return "Door not detected. Please retake the photo facing the door.";
+    }
+
+    // Valid: process + encrypt + save to persistent storage
+    final savedPath = await PhotoService.processEncryptAndSave(capture.bytes);
+    // Always cleanup the temp capture
+    await PhotoService.deleteIfExists(capture.tempPath);
+
+    if (savedPath == null) {
+      return "Failed to save photo. Try again.";
     }
 
     final item = _itemsBox.get(id);
     if (item != null) {
       item.isLocked = true;
-      item.photoPath = photoPath;
+      item.photoPath = savedPath;
       item.timestamp = DateTime.now();
       await item.save(); // Use .save() because LockItem extends HiveObject
       LoggingService.info('Locked item: ${item.name}');
@@ -96,9 +102,6 @@ class LockSessionController extends ChangeNotifier {
     final item = _itemsBox.get(id);
     if (item != null) {
       item.isLocked = false;
-      // Optionally clear photo/timestamp on unlock
-      // item.photoPath = null;
-      // item.timestamp = null;
       await item.save();
       LoggingService.info('Unlocked item: ${item.name}');
       notifyListeners();

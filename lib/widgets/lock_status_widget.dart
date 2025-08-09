@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../controllers/lock_session_controller.dart';
-import 'dart:io';
+import '../services/photo_service.dart';
+import 'dart:typed_data';
 
 class LockStatusWidget extends StatelessWidget {
   const LockStatusWidget({super.key});
@@ -59,19 +60,37 @@ class LockStatusWidget extends StatelessWidget {
                   ),
                 ),
               ],
-              if (controller.lastPhotoPath != null) ...[
-                const SizedBox(height: 12),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: Image.file(
-                    File(controller.lastPhotoPath!),
-                    height: 100,
-                    width: double.infinity,
-                    fit: BoxFit.cover,
-                  ),
-                ),
-              ],
+              _buildLastPhoto(controller.lastPhotoPath),
             ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildLastPhoto(String? path) {
+    if (path == null) {
+      return const SizedBox.shrink();
+    }
+    return FutureBuilder<Uint8List?>(
+      future: PhotoService.loadDecryptedImageBytes(path),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) {
+          return const SizedBox(
+            width: 120,
+            height: 120,
+            child: Center(
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+          );
+        }
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: Image.memory(
+            snapshot.data!,
+            width: 120,
+            height: 120,
+            fit: BoxFit.cover,
           ),
         );
       },
