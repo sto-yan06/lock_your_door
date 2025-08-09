@@ -1,188 +1,140 @@
-import 'package:flutter/material.dart';
-import 'dart:math';
-import 'dart:convert';
-import '../services/photo_service.dart';
-import '../services/lock_status_service.dart';
-import '../models/lock_status.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
+import 'package:hive/hive.dart';
+import 'package:uuid/uuid.dart';
+import '../models/lock_item.dart';
 import '../services/door_detection_service.dart';
+import '../services/photo_service.dart';
+import '../services/logging_service.dart';
 
-class LockItem {
-  final String id;
-  String name;
-  bool isLocked;
-  String? photoPath;
-  DateTime? timestamp;
-
-  LockItem({
-    required this.id,
-    required this.name,
-    this.isLocked = false,
-    this.photoPath,
-    this.timestamp,
-  });
-
-  Map<String, dynamic> toJson() => {
-        'id': id,
-        'name': name,
-        'isLocked': isLocked,
-        'photoPath': photoPath,
-        'timestamp': timestamp?.toIso8601String(),
-      };
-
-  factory LockItem.fromJson(Map<String, dynamic> json) => LockItem(
-        id: json['id'] as String,
-        name: json['name'] as String,
-        isLocked: json['isLocked'] as bool? ?? false,
-        photoPath: json['photoPath'] as String?,
-        timestamp: json['timestamp'] != null
-            ? DateTime.tryParse(json['timestamp'])
-            : null,
-      );
+// --- ADD THIS FUNCTION HERE ---
+// This helper function is ready to be run in an isolate.
+Future<bool> _isDoorInIsolate(String path) {
+  return DoorDetectionService.isDoor(path);
 }
 
 class LockSessionController extends ChangeNotifier {
-  static const _extraItemsKey = 'extra_lock_items_v1';
+  late Box<LockItem> _itemsBox;
+  final _uuid = const Uuid();
 
-  // Single-item legacy fields (kept for backward compatibility with other views)
-  bool isLocked = false;
-  String? lastPhotoPath;
-  DateTime? lastTimestamp;
+  List<LockItem> get items => _itemsBox.values.toList();
 
-  // New multi-item list
-  final List<LockItem> items = [];
+  // --- Add these getters to restore the missing properties ---
+
+  /// Returns the primary lock item from the database.
+  LockItem? get _primaryItem => _itemsBox.get('primary');
+
+  /// Reports the lock status of the primary door.
+  bool get isLocked => _primaryItem?.isLocked ?? false;
+
+  /// Reports the last activity timestamp of the primary door.
+  DateTime? get lastTimestamp => _primaryItem?.timestamp;
+
+  /// Reports the last photo path of the primary door.
+  String? get lastPhotoPath => _primaryItem?.photoPath;
+  
+  // --- End of new getters ---
 
   LockSessionController() {
-    _loadInitialStatus();
+    _itemsBox = Hive.box<LockItem>('lock_items');
   }
 
-  // Load status on app start
-  Future<void> _loadInitialStatus() async {
-    final status = await LockStatusService.getStatus();
-    // Create (or update) primary item (Door 1)
-    final primary = LockItem(
-      id: 'primary',
-      name: 'Door 1',
-      isLocked: status.isLocked,
-      photoPath: status.photoPath,
-      timestamp: status.timestamp,
-    );
-    items.add(primary);
-    await _loadExtraItems();         // <- load saved extra doors
-    // Mirror legacy fields
-    isLocked = primary.isLocked;
-    lastPhotoPath = primary.photoPath;
-    lastTimestamp = primary.timestamp;
+  Future<void> loadInitialData() async {
+    // Check if the box is empty and add default items if needed.
+    if (_itemsBox.isEmpty) {
+      LoggingService.info('Box is empty, populating with default items.');
+      final defaultItems = [
+        LockItem(id: 'primary', name: 'Front Door'),
+        LockItem(id: 'secondary', name: 'Garage Door'),
+        LockItem(id: 'tertiary', name: 'Back Door'),
+      ];
+      // Use put() to add items. The key is the item's ID.
+      for (var item in defaultItems) {
+        await _itemsBox.put(item.id, item);
+      }
+    }
+    LoggingService.info('${_itemsBox.length} items loaded from Hive.');
     notifyListeners();
   }
 
-  Future<void> _loadExtraItems() async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString(_extraItemsKey);
-    if (raw == null) return;
-    final decoded = jsonDecode(raw);
-    if (decoded is List) {
-      for (final e in decoded) {
-        try {
-          final item = LockItem.fromJson(Map<String, dynamic>.from(e));
-          if (item.id != 'primary') {
-            items.add(item);
-          }
-        } catch (_) {}
-      }
-    }
-  }
-
-  Future<void> _saveExtraItems() async {
-    final prefs = await SharedPreferences.getInstance();
-    final extra = items
-        .where((e) => e.id != 'primary')
-        .map((e) => e.toJson())
-        .toList();
-    await prefs.setString(_extraItemsKey, jsonEncode(extra));
-  }
-
-  // Add a new lockable item (not persisted yet)
-  void addItem(String name) {
-    final id = '${DateTime.now().millisecondsSinceEpoch}_${Random().nextInt(9999)}';
-    items.add(LockItem(id: id, name: name));
-    _saveExtraItems();               // <- persist
+  // --- Add this new method ---
+  Future<void> addItem(String name) async {
+    final newItem = LockItem(
+      id: _uuid.v4(), // Generate a unique ID
+      name: name,
+    );
+    await _itemsBox.put(newItem.id, newItem);
+    LoggingService.info('Added new item: $name');
     notifyListeners();
   }
 
   Future<String?> lockItem(String id) async {
-    final item = items.firstWhere((e) => e.id == id);
     final photoPath = await PhotoService.takeAndSavePhotoWithTimestamp();
-    if (photoPath == null) return "Photo cancelled."; // User cancelled camera
+    if (photoPath == null) return "Photo cancelled.";
 
-    // --- Door Detection Step ---
-    final isDoor = await DoorDetectionService.isDoor(photoPath);
+    final isDoor = await compute(_isDoorInIsolate, photoPath);
     if (!isDoor) {
-      // Clean up the invalid photo to save space
       try {
         await File(photoPath).delete();
-      } catch (_) {
-        // Ignore errors on cleanup
-      }
-      return "There is no door in the photo!"; // Return error message
+      } catch (_) {}
+      return "There is no door in the photo!";
     }
-    // --- End of Detection ---
 
-    item.isLocked = true;
-    item.photoPath = photoPath;
-    item.timestamp = DateTime.now();
-    if (id == 'primary') {
-      await LockStatusService.setLocked(photoPath);
-      isLocked = true;
-      lastPhotoPath = photoPath;
-      lastTimestamp = item.timestamp;
-    } else {
-      await _saveExtraItems();
+    final item = _itemsBox.get(id);
+    if (item != null) {
+      item.isLocked = true;
+      item.photoPath = photoPath;
+      item.timestamp = DateTime.now();
+      await item.save(); // Use .save() because LockItem extends HiveObject
+      LoggingService.info('Locked item: ${item.name}');
+      notifyListeners();
     }
-    notifyListeners();
-    return null; // Return null on success
+    return null;
   }
 
   Future<void> unlockItem(String id) async {
-    final item = items.firstWhere((e) => e.id == id);
-    item.isLocked = false;
-    item.photoPath = null;
-    item.timestamp = null;
-    if (id == 'primary') {
-      await LockStatusService.setUnlocked();
-      isLocked = false;
-      lastPhotoPath = null;
-      lastTimestamp = null;
-    } else {
-      await _saveExtraItems();
+    final item = _itemsBox.get(id);
+    if (item != null) {
+      item.isLocked = false;
+      // Optionally clear photo/timestamp on unlock
+      // item.photoPath = null;
+      // item.timestamp = null;
+      await item.save();
+      LoggingService.info('Unlocked item: ${item.name}');
+      notifyListeners();
     }
-    notifyListeners();
   }
 
-  // Legacy single-door APIs (map to primary item)
-  Future<void> startLockSession() async {
-    await lockItem('primary');
-  }
-
-  // Unlock session manually
-  Future<void> unlock() async {
-    await unlockItem('primary');
-  }
-
-  // Clear all stored data
+  /// Resets the state of all items and deletes associated photos.
   Future<void> clearAllData() async {
-    await unlockItem('primary');
-    // Clear non-primary in-memory
-    items.removeWhere((e) => e.id != 'primary');
-    await _saveExtraItems();
+    LoggingService.warning('Resetting all item states and deleting photos.');
+
+    // Iterate through all items in the box without deleting the entries.
+    for (var item in _itemsBox.values) {
+      // 1. Delete the associated photo file from storage if it exists.
+      if (item.photoPath != null) {
+        try {
+          final photoFile = File(item.photoPath!);
+          if (await photoFile.exists()) {
+            await photoFile.delete();
+            LoggingService.debug('Deleted photo: ${item.photoPath}');
+          }
+        } catch (e) {
+          LoggingService.warning('Could not delete photo file: ${item.photoPath}', e);
+        }
+      }
+
+      // 2. Reset the item's properties to their default state.
+      item.isLocked = false;
+      item.photoPath = null;
+      item.timestamp = null;
+
+      // 3. Save the updated item back to the database.
+      await item.save();
+    }
+
+    LoggingService.info('All items have been reset.');
+    // Update the UI to reflect the changes.
     notifyListeners();
   }
-
-  // Get current lock status (optional public getter)
-  LockStatus get currentStatus => LockStatus(
-        isLocked: isLocked,
-        photoPath: lastPhotoPath,
-        timestamp: lastTimestamp,
-      );
 }

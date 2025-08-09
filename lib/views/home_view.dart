@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../controllers/lock_session_controller.dart';
 import 'dart:io';
+import '../models/lock_item.dart';
 
 class HomeView extends StatelessWidget {
   const HomeView({super.key});
