@@ -5,11 +5,16 @@ import 'package:hive_flutter/hive_flutter.dart';
 import 'package:provider/provider.dart';
 import 'controllers/lock_session_controller.dart';
 import 'models/lock_item.dart';
-import 'ui/home_screen.dart';
+import 'ui/launch_screen.dart';
+import 'services/door_detection_service.dart';
 
 void main() async {
   // Ensure Flutter is ready.
   WidgetsFlutterBinding.ensureInitialized();
+  
+  // Initialize AI model for door detection
+  await DoorDetectionService.loadModel();
+  await DoorDetectionService.warmup(); // preload TFLite
 
   // Initialize Hive and specify a subdirectory for its files.
   await Hive.initFlutter();
@@ -68,7 +73,7 @@ class MyApp extends StatelessWidget {
           elevation: 0,
         ),
       ),
-      home: const HomeScreen(),
+      home: const LaunchScreen(),
     );
   }
 }

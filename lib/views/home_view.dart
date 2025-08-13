@@ -1,11 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../controllers/lock_session_controller.dart';
-import 'dart:io';
 import '../models/lock_item.dart';
+import 'camera_screen.dart'; // Add this import
+import 'dart:io';
 
-class HomeView extends StatelessWidget {
+class HomeView extends StatefulWidget {
   const HomeView({super.key});
+
+  @override
+  State<HomeView> createState() => _HomeViewState();
+}
+
+class _HomeViewState extends State<HomeView> {
+  // REMOVED: Camera controller and initialization
+  // The camera will be handled per-door basis
 
   Future<bool?> _showUnlockConfirmation(BuildContext context, String name) {
     return showDialog<bool>(
@@ -62,13 +71,13 @@ class HomeView extends StatelessWidget {
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-            TextButton(
-              onPressed: () {
-                final value = textController.text.trim();
-                if (value.isNotEmpty) Navigator.pop(ctx, value);
-              },
-              child: const Text('Add'),
-            ),
+          TextButton(
+            onPressed: () {
+              final value = textController.text.trim();
+              if (value.isNotEmpty) Navigator.pop(ctx, value);
+            },
+            child: const Text('Add'),
+          ),
         ],
       ),
     );
@@ -77,14 +86,38 @@ class HomeView extends StatelessWidget {
     }
   }
 
+  // NEW: Open camera for specific door
+  Future<void> _openCameraForDoor(String itemId, String doorName) async {
+    final result = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => CameraScreen(
+          itemId: itemId,
+          doorName: doorName,
+        ),
+      ),
+    );
+
+    // Show result message
+    if (result == true && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('✅ $doorName locked successfully!'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final controller = context.watch<LockSessionController>();
+    
     return SafeArea(
       bottom: false,
       child: Column(
         children: [
-          // Custom header (instead of default app bar look)
+          // Custom header
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
             child: Row(
@@ -100,6 +133,10 @@ class HomeView extends StatelessWidget {
               ],
             ),
           ),
+          
+          // REMOVED: Always-on camera preview
+          
+          // Items list
           Expanded(
             child: ListView(
               padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -116,24 +153,13 @@ class HomeView extends StatelessWidget {
                         : null,
                     onToggle: () async {
                       if (item.isLocked) {
-                        final confirm =
-                            await _showUnlockConfirmation(context, item.name);
+                        final confirm = await _showUnlockConfirmation(context, item.name);
                         if (confirm == true) {
                           await controller.unlockItem(item.id);
                         }
                       } else {
-                        // Updated lock flow with error handling
-                        final error = await controller.lockItem(item.id);
-                        if (error != null &&
-                            error != "Photo cancelled." &&
-                            context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text(error),
-                              backgroundColor: Colors.redAccent,
-                            ),
-                          );
-                        }
+                        // NEW: Open camera screen for this specific door
+                        await _openCameraForDoor(item.id, item.name);
                       }
                     },
                   ),
@@ -152,6 +178,7 @@ class HomeView extends StatelessWidget {
   }
 }
 
+// Keep existing _DeviceCard and _AddItemButton classes unchanged
 class _DeviceCard extends StatelessWidget {
   final LockItem item;
   final VoidCallback onToggle;
@@ -280,7 +307,7 @@ class _AddItemButton extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
         decoration: BoxDecoration(
           color: Colors.white.withValues(alpha: 0.10),
-            borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(14),
         ),
         child: Row(
           children: const [

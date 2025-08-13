@@ -16,17 +16,17 @@ class _HomeScreenState extends State<HomeScreen> {
 
   final List<Widget> _views = const [
     MenuView(),
-    HomeView(), // After edit: no gradient wrapper inside
+    HomeView(),
     ProfileView(),
   ];
 
-  final List<IconData> _icons = [
+  final List<IconData> _icons = const [
     Icons.menu,
     Icons.home,
     Icons.person,
   ];
 
-  final List<String> _titles = [
+  final List<String> _titles = const [
     'Settings',
     'Home',
     'Profile',
@@ -35,25 +35,28 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: _selectedIndex == 1
-          ? null
-          : AppBar(
-              title: Text(_titles[_selectedIndex]),
-              backgroundColor: Colors.transparent,
-              elevation: 0,
-              foregroundColor: Colors.white,
-              centerTitle: true,
-            ),
+      appBar: AppBar(
+        title: const Text('Lock Your Door'),
+        backgroundColor: Colors.white,
+        foregroundColor: Colors.black,
+        elevation: 0,
+        actions: [
+          // Remove the AI Test button
+          // IconButton(
+          //   tooltip: 'AI Test',
+          //   icon: const Icon(Icons.videocam),
+          //   onPressed: () {
+          //     Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AITestView()));
+          //   },
+          // ),
+        ],
+      ),
       backgroundColor: Colors.transparent,
       extendBody: true,
       body: Container(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
-            colors: [
-              Color(0xFF3D0F63),
-              Color(0xFF5A2F7E),
-              Color(0xFF5F3384)
-            ],
+            colors: [Color(0xFF3D0F63), Color(0xFF5A2F7E), Color(0xFF5F3384)],
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
           ),

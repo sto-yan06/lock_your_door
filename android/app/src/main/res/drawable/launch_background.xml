@@ -1,12 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Modify this file to customize your launch splash screen -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item android:drawable="@android:color/white" />
 
-    <!-- You can insert your own image assets here -->
-    <!-- <item>
-        <bitmap
-            android:gravity="center"
-            android:src="@mipmap/launch_image" />
-    </item> -->
+    <!-- Background gradient -->
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:startColor="#6B21A8"   <!-- purple-800 -->
+                android:endColor="#D946EF"     <!-- fuchsia-600 -->
+                android:angle="315" />
+        </shape>
+    </item>
+
+    <!-- Optional translucent circle (no blur on native splash) -->
+    <item android:gravity="center">
+        <shape android:shape="oval">
+            <size android:width="192dp" android:height="192dp" />
+            <solid android:color="#33FFFFFF" />
+        </shape>
+    </item>
+
+    <!-- Center the app icon (uses your launcher icon) -->
+    <item
+        android:gravity="center"
+        android:drawable="@mipmap/ic_launcher" />
 </layer-list>
