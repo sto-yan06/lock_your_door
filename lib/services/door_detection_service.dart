@@ -34,9 +34,12 @@ class _LetterboxResult {
 }
 
 class DoorDetectionService {
+  // FIXED: More strict thresholds to prevent false positives
   static const int _modelInputSize = 640;
-  static const double _confidenceThreshold = 0.30;
+  static const double _confidenceThreshold = 0.50; // RAISED: From 0.30 to 0.50
+  static const double _doorSpecificThreshold = 0.65; // ADDED: Higher threshold for doors
   static const double _iouThreshold = 0.45;
+  static const int _maxDetections = 20; // REDUCED: Limit detections
 
   static Interpreter? _interpreter;
   static List<String>? _labels;
@@ -62,7 +65,7 @@ class DoorDetectionService {
     }
   }
 
-  /// Loads the TFLite model and labels from assets. Call this at app startup.
+  /// RESTORED: Original working model loading
   static Future<void> loadModel() async {
     if (isLoaded) return;
     try {
@@ -93,23 +96,52 @@ class DoorDetectionService {
   }
 
   /// Main public method to check if an image contains a door.
-  static Future<bool> isDoorImage(img.Image originalImage, {double doorConfidence = 0.5}) async {
+  static Future<bool> isDoorImage(img.Image originalImage, {double? doorConfidence}) async {
+    // Use higher threshold specifically for door validation
+    final threshold = doorConfidence ?? _doorSpecificThreshold;
+    
     final detections = await detectObjects(originalImage);
     if (detections.isEmpty) {
-      LoggingService.info("No objects detected.");
+      LoggingService.info("❌ No objects detected in image");
       return false;
     }
-    final bool foundDoor = detections.any((d) => d.label == 'door' && d.confidence >= doorConfidence);
-    LoggingService.info("Door validation result: $foundDoor");
-    return foundDoor;
+
+    // Log all detections for debugging
+    LoggingService.info('🔍 All detections found:');
+    for (final det in detections) {
+      LoggingService.info('   ${det.label}: ${(det.confidence * 100).toStringAsFixed(1)}%');
+    }
+
+    // Filter for high-confidence doors only
+    final doorDetections = detections.where((d) => 
+      d.label.toLowerCase() == 'door' && d.confidence >= threshold
+    ).toList();
+
+    if (doorDetections.isNotEmpty) {
+      final bestDoor = doorDetections.reduce((a, b) => 
+        a.confidence > b.confidence ? a : b
+      );
+      LoggingService.info("✅ High-confidence door found: ${(bestDoor.confidence * 100).toStringAsFixed(1)}%");
+      return true;
+    } else {
+      LoggingService.info("❌ No high-confidence doors found (threshold: ${(threshold * 100).toStringAsFixed(1)}%)");
+      return false;
+    }
   }
 
-  /// Runs object detection on an image and returns a list of detected objects.
+  /// RESTORED: Original working detection method with debug logging
   static Future<List<YoloDetection>> detectObjects(img.Image originalImage) async {
+    // ADD DEBUG LOGGING
+    LoggingService.info('🔍 DEBUG: detectObjects called');
+    LoggingService.info('🔍 DEBUG: Model loaded: $isLoaded');
+    LoggingService.info('🔍 DEBUG: Labels available: ${_labels?.length ?? 0}');
+    
     if (!isLoaded || _labels == null) {
-      LoggingService.error("Model not loaded, cannot run detection.");
+      LoggingService.error("❌ DEBUG: Model not loaded, cannot run detection.");
       return [];
     }
+
+    LoggingService.info('🔍 DEBUG: Image size: ${originalImage.width}x${originalImage.height}');
 
     // 1) Preprocess (letterbox to 640x640)
     final letterboxResult = _letterbox(originalImage);
@@ -122,27 +154,36 @@ class DoorDetectionService {
     final outShape = List<int>.from(outTensor.shape); // e.g., [1, 84, 8400] or [1, 8400, 84]
     final output = _allocNestedFloatList(outShape);
 
+    LoggingService.info('🔍 DEBUG: Output shape: $outShape');
+
     // 4) Inference
+    final stopwatch = Stopwatch()..start();
     try {
       _interpreter!.runForMultipleInputs([input], {0: output});
     } catch (e, st) {
       LoggingService.error("❌ Model inference failed.", e, st);
       return [];
     }
+    stopwatch.stop();
+    LoggingService.info('🔍 DEBUG: Inference time: ${stopwatch.elapsedMilliseconds}ms');
 
     // 5) Post-process
     final rawDetections = _parseOutputNested(output, outShape);
+    LoggingService.info('🔍 DEBUG: Raw detections: ${rawDetections.length}');
+    
     final scaledDetections = _scaleBoxes(rawDetections, letterboxResult, originalImage.width, originalImage.height);
+    LoggingService.info('🔍 DEBUG: Scaled detections: ${scaledDetections.length}');
+    
     final finalDetections = _nonMaxSuppression(scaledDetections);
+    LoggingService.info('🔍 DEBUG: Final detections after NMS: ${finalDetections.length}');
 
-    LoggingService.info("Final detections after NMS: ${finalDetections.length}");
     for (var det in finalDetections) {
-      LoggingService.debug(det.toString());
+      LoggingService.info('🔍 DEBUG: ${det.toString()}');
     }
     return finalDetections;
   }
 
-  /// FIXED: Resizes and pads the image using Image 4.0 API
+  /// RESTORED: Original working letterbox method
   static _LetterboxResult _letterbox(img.Image image) {
     final imageWidth = image.width;
     final imageHeight = image.height;
@@ -166,7 +207,7 @@ class DoorDetectionService {
     return _LetterboxResult(letterboxedImage, scale, padX, padY);
   }
 
-  /// Builds a 4-D Float32 (as nested List<double>) with shape [1, 640, 640, 3].
+  /// RESTORED: Original working input preparation
   static List<dynamic> _prepareInput4D(img.Image image) {
     final h = _modelInputSize;
     final w = _modelInputSize;
@@ -188,7 +229,7 @@ class DoorDetectionService {
 
     for (int y = 0; y < h; y++) {
       for (int x = 0; x < w; x++) {
-        final p = image.getPixel(x, y); // image v4 returns a Pixel with r/g/b getters
+        final p = image.getPixel(x, y);
         input[0][y][x][0] = p.r / 255.0;
         input[0][y][x][1] = p.g / 255.0;
         input[0][y][x][2] = p.b / 255.0;
@@ -197,8 +238,7 @@ class DoorDetectionService {
     return input;
   }
 
-  /// Allocates a nested List<double> structure that matches a given shape.
-  /// Works for shapes of rank 1..4 (typical for TFLite outputs).
+  /// RESTORED: Original working allocation method
   static dynamic _allocNestedFloatList(List<int> shape) {
     if (shape.isEmpty) return 0.0;
     dynamic build(List<int> dims, int idx) {
@@ -210,16 +250,15 @@ class DoorDetectionService {
     return build(shape, 0);
   }
 
-  /// Parses nested output into detections. Supports [1, C, N] or [1, N, C].
-  /// Assumes channels = 4 (box) + numClasses.
+  /// ENHANCED: More strict parsing with door-specific logic
   static List<YoloDetection> _parseOutputNested(dynamic nested, List<int> shape) {
     if (_labels == null || _labels!.isEmpty) return [];
 
     // Normalize to [1, channels, numPredictions]
-    final bool channelsFirst = (shape.length == 3 && shape[1] < shape[2]); // [1, C, N] means C < N typically
+    final bool channelsFirst = (shape.length == 3 && shape[1] < shape[2]);
     final int batch = shape[0];
     if (batch != 1) {
-      LoggingService.warning('Unexpected batch size: $batch. Proceeding with first batch only.'); // FIXED: warning instead of warn
+      LoggingService.warning('Unexpected batch size: $batch. Proceeding with first batch only.');
     }
 
     final int numClasses = _labels!.length;
@@ -234,8 +273,10 @@ class DoorDetectionService {
       C = shape[2];
     }
 
+    LoggingService.info('🔍 DEBUG: channelsFirst=$channelsFirst, C=$C, N=$N, numClasses=$numClasses');
+
     if (C != channels) {
-      LoggingService.warning('Channel count ($C) != expected (4 + $numClasses = $channels). Proceeding anyway.'); // FIXED: warning instead of warn
+      LoggingService.warning('Channel count ($C) != expected (4 + $numClasses = $channels). Proceeding anyway.');
     }
 
     final List<YoloDetection> detections = [];
@@ -274,24 +315,33 @@ class DoorDetectionService {
         }
       }
 
-      if (bestIdx >= 0 && bestConf >= _confidenceThreshold) {
-        detections.add(
-          YoloDetection(
-            label: _labels![bestIdx],
-            confidence: bestConf,
-            x: cx,
-            y: cy,
-            w: w,
-            h: h,
-          ),
-        );
+      // ENHANCED: Different thresholds for different object types
+      if (bestIdx >= 0) {
+        final label = _labels![bestIdx];
+        double requiredThreshold = _confidenceThreshold;
+        
+        // Higher threshold for doors specifically
+        if (label.toLowerCase() == 'door') {
+          requiredThreshold = _doorSpecificThreshold;
+        }
+        
+        if (bestConf >= requiredThreshold) {
+          detections.add(
+            YoloDetection(
+              label: label,
+              confidence: bestConf,
+              x: cx, y: cy, w: w, h: h,
+            ),
+          );
+        }
       }
     }
 
-    return detections;
+    // SECURITY: Limit final detections
+    return detections.take(_maxDetections).toList();
   }
 
-  /// Scales bounding boxes from model space (640x640) back to original image space.
+  /// RESTORED: Original working methods
   static List<YoloDetection> _scaleBoxes(List<YoloDetection> detections, _LetterboxResult lb, int originalW, int originalH) {
     return detections.map((det) {
       // Undo letterbox padding and scaling
@@ -318,7 +368,6 @@ class DoorDetectionService {
     }).toList();
   }
 
-  /// Filters out overlapping bounding boxes for the same object class.
   static List<YoloDetection> _nonMaxSuppression(List<YoloDetection> detections) {
     final list = List<YoloDetection>.from(detections);
     list.sort((a, b) => b.confidence.compareTo(a.confidence));
@@ -337,7 +386,6 @@ class DoorDetectionService {
     return keep;
   }
 
-  /// Calculates the Intersection over Union (IoU) of two bounding boxes.
   static double _iou(YoloDetection a, YoloDetection b) {
     final double xA = max(a.x, b.x);
     final double yA = max(a.y, b.y);
@@ -349,5 +397,19 @@ class DoorDetectionService {
     final double areaB = max(0.0, b.w) * max(0.0, b.h);
     final double denom = areaA + areaB - inter + 1e-6;
     return denom <= 0 ? 0.0 : (inter / denom);
+  }
+
+  /// Clean up resources
+  static Future<void> dispose() async {
+    if (_interpreter != null) {
+      try {
+        _interpreter!.close();
+        LoggingService.info('Model resources cleaned up');
+      } catch (e) {
+        LoggingService.error('Error during cleanup', e);
+      }
+      _interpreter = null;
+    }
+    _labels = null;
   }
 }

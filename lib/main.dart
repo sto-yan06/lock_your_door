@@ -14,7 +14,7 @@ void main() async {
   
   // Initialize AI model for door detection
   await DoorDetectionService.loadModel();
-  await DoorDetectionService.warmup(); // preload TFLite
+  await DoorDetectionService.warmup(); // RESTORED: This should work now
 
   // Initialize Hive and specify a subdirectory for its files.
   await Hive.initFlutter();

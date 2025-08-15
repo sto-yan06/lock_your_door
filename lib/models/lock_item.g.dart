@@ -20,15 +20,16 @@ class LockItemAdapter extends TypeAdapter<LockItem> {
       id: fields[0] as String,
       name: fields[1] as String,
       isLocked: fields[2] as bool,
-      timestamp: fields[3] as DateTime?,
+      lockedAt: fields[3] as DateTime?,
       photoPath: fields[4] as String?,
+      unlockedAt: fields[5] as DateTime?,
     );
   }
 
   @override
   void write(BinaryWriter writer, LockItem obj) {
     writer
-      ..writeByte(5)
+      ..writeByte(6)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -36,9 +37,11 @@ class LockItemAdapter extends TypeAdapter<LockItem> {
       ..writeByte(2)
       ..write(obj.isLocked)
       ..writeByte(3)
-      ..write(obj.timestamp)
+      ..write(obj.lockedAt)
       ..writeByte(4)
-      ..write(obj.photoPath);
+      ..write(obj.photoPath)
+      ..writeByte(5)
+      ..write(obj.unlockedAt);
   }
 
   @override

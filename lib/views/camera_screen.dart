@@ -3,69 +3,114 @@ import 'package:camera/camera.dart';
 import 'package:provider/provider.dart';
 import '../controllers/lock_session_controller.dart';
 import '../services/photo_service.dart';
+import '../services/logging_service.dart';
+import '../widgets/door_targeting_overlay.dart';
 
 class CameraScreen extends StatefulWidget {
   final String itemId;
   final String doorName;
 
   const CameraScreen({
-    super.key,
+    Key? key, // FIXED: Use Key? instead of super.key
     required this.itemId,
     required this.doorName,
-  });
+  }) : super(key: key);
 
   @override
   State<CameraScreen> createState() => _CameraScreenState();
 }
 
-class _CameraScreenState extends State<CameraScreen> {
+class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver {
   CameraController? _controller;
+  bool _isInitialized = false;
   bool _isCapturing = false;
-  bool _isCameraInitialized = false;
-  String? _errorMessage;
+  String? _error;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _initializeCamera();
-  }
-
-  Future<void> _initializeCamera() async {
-    try {
-      final cameras = await availableCameras();
-      if (cameras.isEmpty) {
-        setState(() => _errorMessage = 'No cameras available');
-        return;
-      }
-
-      // FIXED: Use back camera (index 0) instead of front camera
-      final backCamera = cameras.firstWhere(
-        (camera) => camera.lensDirection == CameraLensDirection.back,
-        orElse: () => cameras.first,
-      );
-
-      _controller = CameraController(
-        backCamera, // Use back camera for door photos
-        ResolutionPreset.high,
-        enableAudio: false,
-      );
-      
-      await _controller!.initialize();
-      
-      if (mounted) {
-        setState(() {
-          _isCameraInitialized = true;
-        });
-      }
-    } catch (e) {
-      setState(() => _errorMessage = 'Camera error: $e');
-    }
   }
 
   @override
   void dispose() {
-    _controller?.dispose();
+    WidgetsBinding.instance.removeObserver(this);
+    _disposeCamera();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (!_isInitialized || _controller == null) return;
+
+    switch (state) {
+      case AppLifecycleState.inactive:
+      case AppLifecycleState.paused:
+        _disposeCamera();
+        break;
+      case AppLifecycleState.resumed:
+        _initializeCamera();
+        break;
+      default:
+        break;
+    }
+  }
+
+  Future<void> _initializeCamera() async {
+    try {
+      LoggingService.info('🔍 DEBUG: Starting camera initialization...');
+      
+      // Check available cameras
+      final cameras = await availableCameras();
+      LoggingService.info('🔍 DEBUG: Available cameras: ${cameras.length}');
+      
+      if (cameras.isEmpty) {
+        setState(() => _error = 'No cameras available');
+        return;
+      }
+
+      // Find back camera
+      final camera = cameras.firstWhere(
+        (c) => c.lensDirection == CameraLensDirection.back,
+        orElse: () => cameras.first,
+      );
+
+      LoggingService.info('🔍 DEBUG: Using camera: ${camera.name}');
+
+      // Create controller with proper settings
+      _controller = CameraController(
+        camera,
+        ResolutionPreset.medium, // Lower resolution for better performance
+        enableAudio: false,
+        imageFormatGroup: ImageFormatGroup.jpeg,
+      );
+
+      LoggingService.info('🔍 DEBUG: Initializing camera controller...');
+      await _controller!.initialize();
+      
+      LoggingService.info('🔍 DEBUG: Camera initialized successfully!');
+      
+      if (mounted) {
+        setState(() {
+          _isInitialized = true;
+          _error = null;
+        });
+      }
+    } catch (e, st) {
+      LoggingService.error('❌ Camera initialization failed', e, st);
+      if (mounted) {
+        setState(() => _error = 'Camera initialization failed: $e');
+      }
+    }
+  }
+
+  Future<void> _disposeCamera() async {
+    if (_controller != null) {
+      await _controller!.dispose();
+      _controller = null;
+      setState(() => _isInitialized = false);
+    }
   }
 
   Future<void> _capturePhoto() async {
@@ -76,37 +121,46 @@ class _CameraScreenState extends State<CameraScreen> {
     setState(() => _isCapturing = true);
 
     try {
-      final controller = context.read<LockSessionController>();
+      // FIXED: Add small delay to prevent buffer issues
+      await Future.delayed(const Duration(milliseconds: 100));
       
-      // Use dual capture method
-      final savedPhotoPath = await PhotoService.captureAndValidateDoor(_controller!);
+      final controller = context.read<LockSessionController>();
+      final savedPhotoPath = await PhotoService.captureAndValidateDoorWithTargeting(_controller!);
       
       if (savedPhotoPath != null) {
-        // Door detected - update the item
+        // Success with high confidence
         final item = controller.items.firstWhere((item) => item.id == widget.itemId);
-        item.isLocked = true;
-        item.photoPath = savedPhotoPath;
-        item.timestamp = DateTime.now();
-        await item.save();
+        await item.lockWithPhoto(savedPhotoPath);
         controller.notifyListeners();
         
-        // FIXED: Check mounted before using context
         if (mounted) {
           Navigator.pop(context, true);
         }
       } else {
-        // Not a door - FIXED: Check mounted before using context
+        // ENHANCED: More specific error messages
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('❌ No door detected. Please try again.'),
+            SnackBar(
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('❌ Door not clearly detected'),
+                  SizedBox(height: 4),
+                  Text(
+                    'Tips: Ensure door is well-lit, centered, and fills most of the frame',
+                    style: TextStyle(fontSize: 12, color: Colors.white70),
+                  ),
+                ],
+              ),
               backgroundColor: Colors.orange,
+              duration: Duration(seconds: 4),
             ),
           );
         }
       }
     } catch (e) {
-      // FIXED: Check mounted before using context
+      LoggingService.error('Photo capture failed', e);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -116,11 +170,31 @@ class _CameraScreenState extends State<CameraScreen> {
         );
       }
     } finally {
-      // FIXED: Check mounted before calling setState
       if (mounted) {
         setState(() => _isCapturing = false);
       }
     }
+  }
+
+  void _showInstructions() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Instructions'),
+        content: Text(
+          '1. Position your device so the ${widget.doorName} fills most of the green frame\n'
+          '2. Ensure the door is clearly visible and well-lit\n'
+          '3. Avoid having other doors in the background\n'
+          '4. Tap the capture button when ready',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Got it'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -131,108 +205,133 @@ class _CameraScreenState extends State<CameraScreen> {
         title: Text('Lock ${widget.doorName}'),
         backgroundColor: Colors.black,
         foregroundColor: Colors.white,
-        leading: IconButton(
-          icon: const Icon(Icons.close),
-          onPressed: () => Navigator.pop(context, false),
-        ),
       ),
-      body: _buildBody(),
+      body: _buildCameraBody(),
     );
   }
 
-  Widget _buildBody() {
-    if (_errorMessage != null) {
+  Widget _buildCameraBody() {
+    // Show error if there's one
+    if (_error != null) {
       return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(Icons.error, color: Colors.red, size: 64),
-            const SizedBox(height: 16),
+            Icon(Icons.error, color: Colors.red, size: 64),
+            SizedBox(height: 16),
             Text(
-              _errorMessage!,
-              style: const TextStyle(color: Colors.white),
-              textAlign: TextAlign.center,
+              'Camera Error',
+              style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
             ),
-            const SizedBox(height: 16),
+            SizedBox(height: 8),
+            Padding(
+              padding: EdgeInsets.all(16),
+              child: Text(
+                _error!,
+                style: TextStyle(color: Colors.white70),
+                textAlign: TextAlign.center,
+              ),
+            ),
+            SizedBox(height: 16),
             ElevatedButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Go Back'),
+              onPressed: () {
+                setState(() => _error = null);
+                _initializeCamera();
+              },
+              child: Text('Retry'),
             ),
           ],
         ),
       );
     }
 
-    if (!_isCameraInitialized || _controller == null) {
-      return const Center(
-        child: CircularProgressIndicator(color: Colors.white),
+    // Show loading if not initialized
+    if (!_isInitialized || _controller == null) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            CircularProgressIndicator(color: Colors.green),
+            SizedBox(height: 16),
+            Text(
+              'Initializing Camera...',
+              style: TextStyle(color: Colors.white, fontSize: 16),
+            ),
+          ],
+        ),
       );
     }
 
+    // FIXED: Proper camera preview with aspect ratio
     return Stack(
       children: [
-        // Camera preview
-        Positioned.fill(
-          child: CameraPreview(_controller!),
-        ),
-        
-        // Instructions overlay
-        Positioned(
-          top: 20,
-          left: 20,
-          right: 20,
-          child: Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.black54,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Text(
-              'Point the camera at ${widget.doorName} and tap the capture button',
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 16,
-              ),
-              textAlign: TextAlign.center,
+        // Camera preview with proper sizing
+        SizedBox.expand(
+          child: FittedBox(
+            fit: BoxFit.cover,
+            child: SizedBox(
+              width: _controller!.value.previewSize?.height ?? 1,
+              height: _controller!.value.previewSize?.width ?? 1,
+              child: CameraPreview(_controller!),
             ),
           ),
         ),
-        
-        // Capture button
+        // Targeting overlay
+        const DoorTargetingOverlay(),
+        // Controls at bottom
         Positioned(
-          bottom: 100,
+          bottom: 50,
           left: 0,
           right: 0,
-          child: Center(
-            child: GestureDetector(
-              onTap: _isCapturing ? null : _capturePhoto,
-              child: Container(
-                width: 80,
-                height: 80,
-                decoration: BoxDecoration(
-                  color: _isCapturing ? Colors.grey : Colors.white,
-                  shape: BoxShape.circle,
-                  border: Border.all(color: Colors.grey.shade300, width: 4),
-                ),
-                child: _isCapturing 
-                  ? const CircularProgressIndicator()
-                  : const Icon(Icons.camera_alt, size: 40),
-              ),
-            ),
-          ),
+          child: _buildCameraControls(),
         ),
-        
+      ],
+    );
+  }
+
+  Widget _buildCameraControls() {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+      children: [
         // Cancel button
-        Positioned(
-          bottom: 120,
-          left: 40,
+        Container(
+          decoration: BoxDecoration(
+            color: Colors.black54,
+            shape: BoxShape.circle,
+          ),
           child: IconButton(
             onPressed: () => Navigator.pop(context, false),
-            icon: const Icon(
-              Icons.close,
-              color: Colors.white,
+            icon: Icon(Icons.close, color: Colors.white, size: 28),
+            iconSize: 32,
+          ),
+        ),
+        // Capture button
+        Container(
+          decoration: BoxDecoration(
+            color: _isCapturing ? Colors.grey : Colors.white,
+            shape: BoxShape.circle,
+            border: Border.all(color: Colors.white, width: 3),
+          ),
+          child: IconButton(
+            onPressed: _isCapturing ? null : _capturePhoto,
+            icon: Icon(
+              _isCapturing ? Icons.hourglass_empty : Icons.camera_alt,
+              color: Colors.black,
               size: 32,
             ),
+            iconSize: 40,
+          ),
+        ),
+        // Instructions button
+        Container(
+          decoration: BoxDecoration(
+            color: Colors.black54,
+            shape: BoxShape.circle,
+          ),
+          child: IconButton(
+            onPressed: _showInstructions,
+            icon: Icon(Icons.help_outline, color: Colors.white, size: 28),
+            iconSize: 32,
           ),
         ),
       ],

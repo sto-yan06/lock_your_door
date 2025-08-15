@@ -199,8 +199,8 @@ class _DeviceCard extends StatelessWidget {
         border: Border.all(color: const Color(0xFF1E88FF), width: 2),
         gradient: LinearGradient(
           colors: [
-            Colors.white.withValues(alpha: .08),
-            Colors.white.withValues(alpha: .04),
+            Colors.white.withValues(alpha: 0.08), // FIXED
+            Colors.white.withValues(alpha: 0.04), // FIXED
           ],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
@@ -306,7 +306,7 @@ class _AddItemButton extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
         decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0.10),
+          color: Colors.white.withValues(alpha: 0.10), // FIXED
           borderRadius: BorderRadius.circular(14),
         ),
         child: Row(
