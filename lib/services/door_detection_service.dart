@@ -25,6 +25,45 @@ class YoloDetection {
   }
 }
 
+/// Result class for comprehensive door analysis
+class DoorDetectionResult {
+  final List<YoloDetection> allDetections;
+  final List<YoloDetection> doorDetections;
+  final List<YoloDetection> reasonableDoorDetections;
+  final double bestDoorConfidence;
+  final bool hasReasonableDoor;
+  final double detectionQuality;
+  
+  DoorDetectionResult({
+    required this.allDetections,
+    required this.doorDetections,
+    required this.reasonableDoorDetections,
+    required this.bestDoorConfidence,
+    required this.hasReasonableDoor,
+    required this.detectionQuality,
+  });
+  
+  /// Get approval message based on quality
+  String get approvalMessage {
+    if (!hasReasonableDoor) {
+      return "❌ No door detected. Please ensure a door is clearly visible.";
+    }
+    
+    if (detectionQuality >= 80) {
+      return "✅ Excellent door detection! High confidence to proceed.";
+    } else if (detectionQuality >= 60) {
+      return "✅ Good door detection. You can proceed to lock.";
+    } else if (detectionQuality >= 40) {
+      return "⚠️ Door detected but image quality could be better. Consider retaking.";
+    } else {
+      return "⚠️ Door detected with low confidence. Please take a clearer photo.";
+    }
+  }
+  
+  /// Can proceed to lock based on quality thresholds
+  bool get canProceedToLock => hasReasonableDoor && detectionQuality >= 45;
+}
+
 /// Helper class for letterboxing result. MUST be a top-level class.
 class _LetterboxResult {
   final img.Image image;
@@ -35,9 +74,13 @@ class _LetterboxResult {
 
 class DoorDetectionService {
   static const int _modelInputSize = 640;
-  static const double _confidenceThreshold = 0.30;
+  static const double _baseConfidenceThreshold = 0.25; // Lower base threshold
   static const double _iouThreshold = 0.45;
-
+  
+  // Add dynamic thresholds for different scenarios
+  static const double _strictDoorConfidence = 0.60; // For final door validation
+  static const double _relaxedDoorConfidence = 0.40; // For initial detection
+  
   static Interpreter? _interpreter;
   static List<String>? _labels;
 
@@ -92,16 +135,52 @@ class DoorDetectionService {
     }
   }
 
-  /// Main public method to check if an image contains a door.
-  static Future<bool> isDoorImage(img.Image originalImage, {double doorConfidence = 0.5}) async {
+  /// Enhanced door detection with multiple confidence levels
+  static Future<bool> isDoorImage(img.Image originalImage, {
+    double doorConfidence = 0.5,
+    bool useRelaxedDetection = true,
+  }) async {
     final detections = await detectObjects(originalImage);
     if (detections.isEmpty) {
       LoggingService.info("No objects detected.");
       return false;
     }
-    final bool foundDoor = detections.any((d) => d.label == 'door' && d.confidence >= doorConfidence);
-    LoggingService.info("Door validation result: $foundDoor");
+    
+    // Filter for door-related objects
+    final doorDetections = detections.where((d) => _isDoorRelatedLabel(d.label)).toList();
+    
+    if (doorDetections.isEmpty) {
+      LoggingService.info("No door-related objects detected.");
+      return false;
+    }
+    
+    // Sort by confidence
+    doorDetections.sort((a, b) => b.confidence.compareTo(a.confidence));
+    final bestDoor = doorDetections.first;
+    
+    LoggingService.info("Best door detection: ${bestDoor.label} (${(bestDoor.confidence * 100).toStringAsFixed(1)}%)");
+    
+    // Use different thresholds based on mode
+    final threshold = useRelaxedDetection ? _relaxedDoorConfidence : doorConfidence;
+    final bool foundDoor = bestDoor.confidence >= threshold;
+    
+    LoggingService.info("Door validation result: $foundDoor (threshold: ${(threshold * 100).toStringAsFixed(1)}%)");
     return foundDoor;
+  }
+  
+  /// Check if label is door-related (expand this based on your labels.txt)
+  static bool _isDoorRelatedLabel(String label) {
+    const doorKeywords = [
+      'door',
+      'entrance',
+      'gate',
+      'doorway',
+      'portal',
+      // Add more variations based on your model's labels
+    ];
+    
+    final lowerLabel = label.toLowerCase();
+    return doorKeywords.any((keyword) => lowerLabel.contains(keyword));
   }
 
   /// Runs object detection on an image and returns a list of detected objects.
@@ -142,7 +221,7 @@ class DoorDetectionService {
     return finalDetections;
   }
 
-  /// FIXED: Resizes and pads the image using Image 4.0 API
+  /// Enhanced letterbox with better image quality preservation
   static _LetterboxResult _letterbox(img.Image image) {
     final imageWidth = image.width;
     final imageHeight = image.height;
@@ -150,17 +229,33 @@ class DoorDetectionService {
     final newWidth = (imageWidth * scale).round();
     final newHeight = (imageHeight * scale).round();
 
-    // Resize the image
-    final resizedImage = img.copyResize(image, width: newWidth, height: newHeight);
+    // Use better interpolation for resizing
+    img.Image resizedImage;
+    if (scale < 1.0) {
+      // Downscaling - use cubic interpolation for better quality
+      resizedImage = img.copyResize(
+        image, 
+        width: newWidth, 
+        height: newHeight,
+        interpolation: img.Interpolation.cubic, // Better quality
+      );
+    } else {
+      // Upscaling - use linear interpolation
+      resizedImage = img.copyResize(
+        image, 
+        width: newWidth, 
+        height: newHeight,
+        interpolation: img.Interpolation.linear,
+      );
+    }
 
     final padX = (_modelInputSize - newWidth) / 2.0;
     final padY = (_modelInputSize - newHeight) / 2.0;
 
-    // FIXED: Use Image 4.0 API for creating and compositing images
+    // Create letterboxed image with better padding
     final letterboxedImage = img.Image(width: _modelInputSize, height: _modelInputSize);
-    img.fill(letterboxedImage, color: img.ColorRgb8(114, 114, 114)); // grey pad
+    img.fill(letterboxedImage, color: img.ColorRgb8(114, 114, 114)); // Standard YOLO padding
     
-    // FIXED: Use compositeImage instead of copyInto
     img.compositeImage(letterboxedImage, resizedImage, dstX: padX.round(), dstY: padY.round());
 
     return _LetterboxResult(letterboxedImage, scale, padX, padY);
@@ -274,7 +369,7 @@ class DoorDetectionService {
         }
       }
 
-      if (bestIdx >= 0 && bestConf >= _confidenceThreshold) {
+      if (bestIdx >= 0 && bestConf >= _baseConfidenceThreshold) {
         detections.add(
           YoloDetection(
             label: _labels![bestIdx],
@@ -327,7 +422,12 @@ class DoorDetectionService {
     for (final d in list) {
       bool ok = true;
       for (final k in keep) {
-        if (d.label == k.label && _iou(d, k) > _iouThreshold) {
+        // Use different IoU thresholds for different object types
+        final iouThreshold = _isDoorRelatedLabel(d.label) && _isDoorRelatedLabel(k.label) 
+            ? 0.6  // More lenient for doors (allow some overlap)
+            : _iouThreshold; // Standard for other objects
+            
+        if (d.label == k.label && _iou(d, k) > iouThreshold) {
           ok = false;
           break;
         }
@@ -349,5 +449,82 @@ class DoorDetectionService {
     final double areaB = max(0.0, b.w) * max(0.0, b.h);
     final double denom = areaA + areaB - inter + 1e-6;
     return denom <= 0 ? 0.0 : (inter / denom);
+  }
+
+  /// Comprehensive door detection with detailed analysis
+  static Future<DoorDetectionResult> analyzeDoorImage(img.Image originalImage) async {
+    final detections = await detectObjects(originalImage);
+    
+    // Separate door and non-door detections
+    final doorDetections = detections.where((d) => _isDoorRelatedLabel(d.label)).toList();
+    final otherDetections = detections.where((d) => !_isDoorRelatedLabel(d.label)).toList();
+    
+    // Sort by confidence
+    doorDetections.sort((a, b) => b.confidence.compareTo(a.confidence));
+    
+    // Calculate detection quality metrics
+    final bestDoorConfidence = doorDetections.isNotEmpty ? doorDetections.first.confidence : 0.0;
+    final totalDetections = detections.length;
+    final doorDetectionCount = doorDetections.length;
+    
+    // Check for reasonable door size (doors should be relatively large in the image)
+    final reasonableDoors = doorDetections.where((d) {
+      final area = d.w * d.h;
+      final imageArea = originalImage.width * originalImage.height;
+      final areaRatio = area / imageArea;
+      return areaRatio > 0.02 && areaRatio < 0.8; // Door should be 2-80% of image
+    }).toList();
+    
+    return DoorDetectionResult(
+      allDetections: detections,
+      doorDetections: doorDetections,
+      reasonableDoorDetections: reasonableDoors,
+      bestDoorConfidence: bestDoorConfidence,
+      hasReasonableDoor: reasonableDoors.isNotEmpty && bestDoorConfidence >= _relaxedDoorConfidence,
+      detectionQuality: _calculateQuality(doorDetections, otherDetections, originalImage),
+    );
+  }
+
+  /// Calculate detection quality score
+  static double _calculateQuality(List<YoloDetection> doors, List<YoloDetection> others, img.Image image) {
+    if (doors.isEmpty) return 0.0;
+    
+    double score = 0.0;
+    final bestDoor = doors.first;
+    
+    // Base confidence score (0-40 points)
+    score += bestDoor.confidence * 40;
+    
+    // Size reasonableness (0-20 points)
+    final area = bestDoor.w * bestDoor.h;
+    final imageArea = image.width * image.height;
+    final areaRatio = area / imageArea;
+    if (areaRatio > 0.05 && areaRatio < 0.6) {
+      score += 20;
+    } else if (areaRatio > 0.02 && areaRatio < 0.8) {
+      score += 10;
+    }
+    
+    // Aspect ratio check (doors are typically taller than wide) (0-20 points)
+    final aspectRatio = bestDoor.h / bestDoor.w;
+    if (aspectRatio > 1.5 && aspectRatio < 4.0) {
+      score += 20;
+    } else if (aspectRatio > 1.0 && aspectRatio < 5.0) {
+      score += 10;
+    }
+    
+    // Position check - doors often in center or sides (0-10 points)
+    final centerX = bestDoor.x + bestDoor.w / 2;
+    final relativeX = centerX / image.width;
+    if (relativeX > 0.2 && relativeX < 0.8) {
+      score += 10;
+    }
+    
+    // Multiple door detections can indicate higher confidence (0-10 points)
+    if (doors.length > 1 && doors[1].confidence > 0.3) {
+      score += 10;
+    }
+    
+    return score.clamp(0.0, 100.0);
   }
 }
