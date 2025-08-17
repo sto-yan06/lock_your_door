@@ -26,12 +26,6 @@ class _HomeScreenState extends State<HomeScreen> {
     Icons.person,
   ];
 
-  final List<String> _titles = const [
-    'Settings',
-    'Home',
-    'Profile',
-  ];
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(

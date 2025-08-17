@@ -7,14 +7,20 @@ import 'controllers/lock_session_controller.dart';
 import 'models/lock_item.dart';
 import 'ui/launch_screen.dart';
 import 'services/door_detection_service.dart';
+import 'services/logging_service.dart';
 
 void main() async {
   // Ensure Flutter is ready.
   WidgetsFlutterBinding.ensureInitialized();
   
-  // Initialize AI model for door detection
-  await DoorDetectionService.loadModel();
-  await DoorDetectionService.warmup(); // RESTORED: This should work now
+  // Initialize model early but don't block app startup
+  DoorDetectionService.initialize().then((success) {
+    if (success) {
+      LoggingService.info('🤖 Door detection ready');
+    } else {
+      LoggingService.error('🚫 Door detection unavailable', null);
+    }
+  });
 
   // Initialize Hive and specify a subdirectory for its files.
   await Hive.initFlutter();
@@ -37,7 +43,6 @@ void main() async {
 
   // --- 2. Register adapter and open the ENCRYPTED box ---
   Hive.registerAdapter(LockItemAdapter());
-
   await Hive.openBox<LockItem>(
     'lock_items',
     // Pass the encryption key to Hive
